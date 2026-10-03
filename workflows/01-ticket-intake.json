@@ -1,0 +1,958 @@
+{
+  "name": "SupportFlow AI — Ticket Intake and AI Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## МЕТА WORKFLOW\n\nАвтоматично перетворювати нові email-звернення на контрольовані тікети:\n\n1. Отримати новий лист із Gmail.\n2. Перевірити звернення на дублювання.\n3. Класифікувати тікет за допомогою AI.\n4. Визначити категорію, пріоритет, відповідального та SLA.\n5. Записати результат у Google Sheets.\n6. Повідомити команду в Slack.\n7. Додати в Gmail мітку Ticketed.",
+        "height": 304,
+        "width": 688,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1056,
+        -912
+      ],
+      "typeVersion": 1,
+      "id": "d0159412-4086-40f6-8b9f-26e9bbab3cc5",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "maxResults": 1,
+        "filters": {
+          "includeSpamTrash": false,
+          "includeDrafts": false,
+          "q": "is:unread newer_than:1d -label:Ticketed -from:automation@example.com -subject:\"[ЕСКАЛАЦІЯ L2]\""
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1248,
+        -512
+      ],
+      "id": "84409b0c-63b5-4f4a-8563-dd13a8b0c0f7",
+      "name": "Gmail — нове звернення",
+      "notesInFlow": true,
+      "notes": "Перевіряє Gmail щохвилини та отримує нові непрочитані листи без мітки Ticketed. Після успішної обробки workflow додає цю мітку, щоб одне звернення не створювало повторні тікети."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "eb697768-e0af-4af3-8164-6d9487b6233a",
+              "name": "ticket_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "497e7a54-d2c6-4c6d-8fdf-65c8eac4b4b6",
+              "name": "from_email",
+              "value": "={{ $json.from.value[0].address }}",
+              "type": "string"
+            },
+            {
+              "id": "fcdac935-8e0a-4aa8-87a1-5781bfcb7ebe",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "f667acae-7e61-4431-b80a-99d23396e402",
+              "name": "body",
+              "value": "={{ $json.text || $json.snippet }}",
+              "type": "string"
+            },
+            {
+              "id": "3fe96881-002d-4693-a667-a6fad9ca70a6",
+              "name": "created_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "0283c03b-4b0c-40e3-8b4a-f127ec0fa509",
+              "name": "thread_link",
+              "value": "={{ 'https://mail.google.com/mail/u/0/#inbox/' + $json.threadId }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -1024,
+        -512
+      ],
+      "id": "7de45d7a-772a-4bee-8508-534029dd9814",
+      "name": "Збір контексту тікета",
+      "notesInFlow": true,
+      "notes": "Перетворює вхідний лист на компактний об’єкт тікета. Зберігає ID повідомлення, email відправника, тему, текст звернення, час створення та пряме посилання на Gmail thread. Усі наступні ноди працюють із цими полями."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SPREADSHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Tickets"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "ticket_id",
+              "lookupValue": "={{ $('Збір контексту тікета').item.json.ticket_id }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -800,
+        -512
+      ],
+      "id": "6819465c-9b64-486a-906e-b4885062eae4",
+      "name": "Перевірка наявного ticket_id",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notesInFlow": true,
+      "notes": "Шукає значення ticket_id в аркуші Tickets перед запуском AI-класифікації. Якщо тікет уже існує, наступна нода зупинить повторну обробку. Always Output Data дозволяє продовжити workflow, коли збігів не знайдено."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "99802fb3-075e-48ca-9713-3f5d84108253",
+              "leftValue": "={{ !$json.ticket_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -576,
+        -512
+      ],
+      "id": "ab6643e1-4c2d-4f1e-9dd2-edd5d9786715",
+      "name": "Новий тікет?",
+      "notesInFlow": true,
+      "notes": "Перевіряє результат пошуку в Google Sheets. Гілка True означає, що ticket_id не знайдено і тікет потрібно передати на AI-класифікацію. Гілка False зупиняє повторну обробку дубля."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Тікет від клієнта:\n\nFrom: {{ $('Збір контексту тікета').item.json.from_email }}\nSubject: {{ $('Збір контексту тікета').item.json.subject }}\nBody:\n{{ $('Збір контексту тікета').item.json.body }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Ти — старший координатор клієнтського сервісу агенції онлайн-навчання та консалтингу. Твоя задача — класифікувати вхідний email-тікет, визначити його пріоритет, призначити одного відповідального власника та повернути валідний JSON.\n\nКАТЕГОРІЇ:\n- student_support: доступ до кабінету, розклад, сертифікат, перенесення участі, загальні організаційні питання\n- academic: домашні завдання, навчальні матеріали, питання до ментора, зміст програми та прогрес студента\n- sales: вибір програми, корпоративне навчання, консультація, ціна, апгрейд або нова покупка\n- billing: оплата, інвойс, подвійне списання, повернення коштів, підписка\n- spam: реклама, масові нерелевантні пропозиції або повідомлення без клієнтського наміру\n\nПРІОРИТЕТИ ТА SLA:\n- P1 (30 хв): клієнт втрачає гроші прямо зараз; подвійне списання; оплачений доступ відсутній перед заняттям; корпоративний/VIP-клієнт погрожує розірвати контракт; критична зупинка сервісу\n- P2 (120 хв): клієнт заблокований, але прямої втрати грошей зараз немає; термінове питання до заняття сьогодні; запит на повернення; сильний негатив\n- P3 (1440 хв): стандартне питання, яке потребує відповіді протягом одного дня\n- P4 (2880 хв): побажання, інформаційний запит або низькопріоритетний feedback\n\nВЛАСНИКИ:\n- student_support → student_success_lead\n- academic → academic_coordinator\n- sales → sales_lead\n- billing → finance_lead\n- spam → null\n\nСПЕЦІАЛЬНІ ПРАВИЛА:\n- корпоративний або VIP-клієнт має пріоритет не нижче P2\n- відсутність доступу протягом 24 годин після успішної оплати або перед заняттям сьогодні = P1\n- подвійне списання, chargeback або підтверджена грошова втрата = P1\n- запит на повернення без ознак фінансової втрати = P2\n- якщо лист одночасно стосується навчання й оплати, обирай billing, коли потрібна фінансова дія; інакше academic\n- не позначай як spam звернення чинних студентів, партнерів або лідів, навіть якщо текст короткий\n\nВНУТРІШНІЙ АНАЛІЗ ПЕРЕД РІШЕННЯМ:\n1. Терміновість: дедлайн, заняття сьогодні, повторюваність, блокування, емоційне загострення.\n2. Бізнес-вплив: гроші, retention, контракт, репутація, ризик відтоку.\n3. Контекст: чинний студент, новий лід, VIP/корпоративний клієнт, історія повторних звернень.\n\nУ полі reasoning дай 2–3 короткі речення з перевірюваним обґрунтуванням за цими трьома вимірами. Не розкривай прихований покроковий внутрішній ланцюжок міркувань і не додавай інформацію, якої немає в тікеті.\n\nПОВЕРНИ ТІЛЬКИ JSON БЕЗ MARKDOWN:\n{\n  \"category\": \"student_support|academic|sales|billing|spam\",\n  \"priority\": \"P1|P2|P3|P4\",\n  \"owner\": \"student_success_lead|academic_coordinator|sales_lead|finance_lead|null\",\n  \"sla_minutes\": 30|120|1440|2880,\n  \"reasoning\": \"2–3 речення з обґрунтуванням\",\n  \"summary\": \"одне речення про суть тікета\",\n  \"customer_sentiment\": \"positive|neutral|frustrated|angry\"\n}",
+          "maxIterations": 3,
+          "returnIntermediateSteps": false,
+          "enableStreaming": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -352,
+        -512
+      ],
+      "id": "06e76aa8-1330-4ef3-a47f-44763a107f3e",
+      "name": "AI-класифікація тікета",
+      "notesInFlow": true,
+      "notes": "Класифікує тікет за категорією, пріоритетом, відповідальним і SLA. Повертає структурований результат та коротке перевірюване обґрунтування без збереження прихованого внутрішнього ланцюжка міркувань."
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -352,
+        -288
+      ],
+      "id": "c68e777f-3101-4019-8d4c-e28086a1619d",
+      "name": "Модель OpenAI"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"category\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"student_support\",\n        \"academic\",\n        \"sales\",\n        \"billing\",\n        \"spam\"\n      ]\n    },\n    \"priority\": {\n      \"type\": \"string\",\n      \"enum\": [\"P1\", \"P2\", \"P3\", \"P4\"]\n    },\n    \"owner\": {\n      \"type\": [\"string\", \"null\"],\n      \"enum\": [\n        \"student_success_lead\",\n        \"academic_coordinator\",\n        \"sales_lead\",\n        \"finance_lead\",\n        null\n      ]\n    },\n    \"sla_minutes\": {\n      \"type\": \"integer\",\n      \"enum\": [30, 120, 1440, 2880]\n    },\n    \"reasoning\": {\n      \"type\": \"string\",\n      \"minLength\": 20\n    },\n    \"summary\": {\n      \"type\": \"string\",\n      \"minLength\": 5\n    },\n    \"customer_sentiment\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"positive\",\n        \"neutral\",\n        \"frustrated\",\n        \"angry\"\n      ]\n    }\n  },\n  \"required\": [\n    \"category\",\n    \"priority\",\n    \"owner\",\n    \"sla_minutes\",\n    \"reasoning\",\n    \"summary\",\n    \"customer_sentiment\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -224,
+        -288
+      ],
+      "id": "d2ed427c-ba10-4429-b57a-aa42bc26f327",
+      "name": "Парсер структурованої відповіді",
+      "notesInFlow": true,
+      "notes": "Перевіряє, що відповідь AI містить усі обов’язкові поля, дозволені значення та правильні типи даних. Поле owner допускає значення null для категорії spam."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const raw = $json.output ?? $json;\nconst ctx = $('Збір контексту тікета').item.json;\n\nconst zone = 'Europe/Madrid';\nconst workStart = 9;\nconst workEnd = 19;\n\n// Сюди можна додати офіційні вихідні:\n// const holidays = new Set(['2026-12-25', '2027-01-01']);\nconst holidays = new Set([]);\n\nfunction isBusinessDay(dt) {\n  return dt.weekday <= 5 && !holidays.has(dt.toISODate());\n}\n\nfunction nextBusinessMoment(dt) {\n  let cursor = dt.setZone(zone);\n\n  while (!isBusinessDay(cursor)) {\n    cursor = cursor\n      .plus({ days: 1 })\n      .startOf('day')\n      .set({ hour: workStart });\n  }\n\n  if (cursor.hour < workStart) {\n    return cursor.startOf('day').set({ hour: workStart });\n  }\n\n  if (cursor.hour >= workEnd) {\n    cursor = cursor\n      .plus({ days: 1 })\n      .startOf('day')\n      .set({ hour: workStart });\n\n    while (!isBusinessDay(cursor)) {\n      cursor = cursor.plus({ days: 1 });\n    }\n  }\n\n  return cursor;\n}\n\nfunction addBusinessMinutes(start, minutes) {\n  let cursor = nextBusinessMoment(start);\n  let remaining = Number(minutes);\n\n  while (remaining > 0) {\n    cursor = nextBusinessMoment(cursor);\n\n    const end = cursor\n      .startOf('day')\n      .set({ hour: workEnd });\n\n    const available = Math.max(\n      0,\n      Math.floor(end.diff(cursor, 'minutes').minutes)\n    );\n\n    const step = Math.min(remaining, available);\n\n    cursor = cursor.plus({ minutes: step });\n    remaining -= step;\n\n    if (remaining > 0) {\n      cursor = nextBusinessMoment(\n        cursor\n          .plus({ days: 1 })\n          .startOf('day')\n          .set({ hour: workStart })\n      );\n    }\n  }\n\n  return cursor;\n}\n\nconst created = DateTime.fromISO(ctx.created_at, { zone });\nconst deadline = addBusinessMinutes(created, raw.sla_minutes);\n\nreturn {\n  json: {\n    ticket_id: ctx.ticket_id,\n    created_at: ctx.created_at,\n    from_email: ctx.from_email,\n    subject: ctx.subject,\n    category: raw.category,\n    priority: raw.priority,\n    owner: raw.owner,\n    sla_minutes: Number(raw.sla_minutes),\n    sla_deadline: deadline.toISO(),\n    status: raw.category === 'spam' ? 'filtered' : 'open',\n    summary: raw.summary,\n    reasoning: raw.reasoning,\n    sentiment: raw.customer_sentiment,\n    thread_link: ctx.thread_link,\n    last_escalation_level: -1,\n    last_escalated_at: '',\n    first_response_at: '',\n    resolved_at: '',\n    classifier_version: 'supportflow-v1'\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -512
+      ],
+      "id": "b0704a64-6cbc-4b7c-81bd-86e1ed5ee623",
+      "name": "Формування тікета та SLA",
+      "notesInFlow": true,
+      "notes": "Розраховує SLA у робочі дні з 09:00 до 19:00 в часовому поясі Europe/Madrid. Формує повний 19-польовий запис тікета для збереження в Google Sheets, подальшого контролю SLA та життєвого циклу."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "39ee3186-751b-486d-aa02-54759c249220",
+              "leftValue": "={{ $json.category }}",
+              "rightValue": "spam",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        224,
+        -512
+      ],
+      "id": "ee06a813-8f2a-429c-9d4f-0c17f177dc05",
+      "name": "Не спам?",
+      "notesInFlow": true,
+      "notes": "Розділяє потік після AI-класифікації. Робочі тікети передаються на запис і сповіщення команди, а spam зберігається зі статусом filtered без повідомлення в Slack та без SLA-ескалацій."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SPREADSHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Tickets"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "={{ $('Формування тікета та SLA').item.json.ticket_id }}",
+            "created_at": "={{ $('Формування тікета та SLA').item.json.created_at }}",
+            "from_email": "={{ $('Формування тікета та SLA').item.json.from_email }}",
+            "subject": "={{ $('Формування тікета та SLA').item.json.subject }}",
+            "category": "={{ $('Формування тікета та SLA').item.json.category }}",
+            "priority": "={{ $('Формування тікета та SLA').item.json.priority }}",
+            "owner": "={{ $('Формування тікета та SLA').item.json.owner }}",
+            "sla_minutes": "={{ $('Формування тікета та SLA').item.json.sla_minutes }}",
+            "sla_deadline": "={{ $('Формування тікета та SLA').item.json.sla_deadline }}",
+            "status": "={{ $('Формування тікета та SLA').item.json.status }}",
+            "summary": "={{ $('Формування тікета та SLA').item.json.summary }}",
+            "reasoning": "={{ $('Формування тікета та SLA').item.json.reasoning }}",
+            "sentiment": "={{ $('Формування тікета та SLA').item.json.sentiment }}",
+            "thread_link": "={{ $('Формування тікета та SLA').item.json.thread_link }}",
+            "last_escalation_level": "={{ $('Формування тікета та SLA').item.json.last_escalation_level }}",
+            "last_escalated_at": "={{ $('Формування тікета та SLA').item.json.last_escalated_at }}",
+            "first_response_at": "={{ $('Формування тікета та SLA').item.json.first_response_at }}",
+            "resolved_at": "={{ $('Формування тікета та SLA').item.json.resolved_at }}",
+            "classifier_version": "={{ $('Формування тікета та SLA').item.json.classifier_version }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "from_email",
+              "displayName": "from_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "sla_minutes",
+              "displayName": "sla_minutes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "sla_deadline",
+              "displayName": "sla_deadline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reasoning",
+              "displayName": "reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "thread_link",
+              "displayName": "thread_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_escalation_level",
+              "displayName": "last_escalation_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_escalated_at",
+              "displayName": "last_escalated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "first_response_at",
+              "displayName": "first_response_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "resolved_at",
+              "displayName": "resolved_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "classifier_version",
+              "displayName": "classifier_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        448,
+        -608
+      ],
+      "id": "a646a122-caf7-41ef-8b07-5865abe16aa2",
+      "name": "Запис робочого тікета",
+      "notesInFlow": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notes": "Додає один повний 19-польовий запис робочого тікета до листа Tickets. Цей запис є основним джерелом стану для workflow контролю SLA та життєвого циклу тікета."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SPREADSHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Tickets"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "={{ $json.ticket_id }}",
+            "created_at": "={{ $json.created_at }}",
+            "from_email": "={{ $json.from_email }}",
+            "subject": "={{ $json.subject }}",
+            "category": "={{ $json.category }}",
+            "priority": "={{ $json.priority }}",
+            "owner": "={{ $json.owner }}",
+            "sla_minutes": "={{ $json.sla_minutes }}",
+            "sla_deadline": "={{ $json.sla_deadline }}",
+            "status": "={{ $json.status }}",
+            "summary": "={{ $json.summary }}",
+            "reasoning": "={{ $json.reasoning }}",
+            "sentiment": "={{ $json.sentiment }}",
+            "thread_link": "={{ $json.thread_link }}",
+            "last_escalation_level": "={{ $json.last_escalation_level }}",
+            "last_escalated_at": "={{ $json.last_escalated_at }}",
+            "first_response_at": "={{ $json.first_response_at }}",
+            "resolved_at": "={{ $json.resolved_at }}",
+            "classifier_version": "={{ $json.classifier_version }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "from_email",
+              "displayName": "from_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sla_minutes",
+              "displayName": "sla_minutes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sla_deadline",
+              "displayName": "sla_deadline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reasoning",
+              "displayName": "reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_link",
+              "displayName": "thread_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_escalation_level",
+              "displayName": "last_escalation_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_escalated_at",
+              "displayName": "last_escalated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "first_response_at",
+              "displayName": "first_response_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resolved_at",
+              "displayName": "resolved_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "classifier_version",
+              "displayName": "classifier_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        672,
+        -416
+      ],
+      "id": "4e641466-e2f6-40ca-a794-737ea9a546d6",
+      "name": "Запис відфільтрованого тікета",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notesInFlow": true,
+      "notes": "Зберігає spam-звернення у листі Tickets зі статусом filtered для аудиту роботи AI-класифікатора. Не передає такі звернення в Slack і не включає їх до SLA-ескалацій."
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SUPPORT_CHANNEL_ID"
+        },
+        "text": "=:rotating_light: *Новий тікет — {{ $('Формування тікета та SLA').item.json.priority }}*  *Власник:* {{ $('Формування тікета та SLA').item.json.owner }} *Категорія:* {{ $('Формування тікета та SLA').item.json.category }} *SLA:* {{ $('Формування тікета та SLA').item.json.sla_minutes }} хв *Дедлайн:* {{ $('Формування тікета та SLA').item.json.sla_deadline }} *Настрій клієнта:* {{ $('Формування тікета та SLA').item.json.sentiment }}  *Тема:* {{ $('Формування тікета та SLA').item.json.subject }} *Від:* {{ $('Формування тікета та SLA').item.json.from_email }}  *Що сталося:* {{ $('Формування тікета та SLA').item.json.summary }}  *Чому такий пріоритет:* _{{ $('Формування тікета та SLA').item.json.reasoning }}_  <{{ $('Формування тікета та SLA').item.json.thread_link }}|→ Відкрити лист у Gmail>",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        672,
+        -608
+      ],
+      "id": "1bb41ea1-5abf-40c5-b694-6bba79e011cd",
+      "name": "сповіщення відповідального",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notesInFlow": true,
+      "notes": "Надсилає в канал Slack #cx-tickets структуроване повідомлення про новий робочий тікет: відповідального, категорію, пріоритет, SLA, короткий опис та перевірюване обґрунтування рішення AI."
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Збір контексту тікета').item.json.ticket_id }}",
+        "labelIds": [
+          "REPLACE_WITH_TICKETED_LABEL_ID"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        -512
+      ],
+      "id": "ecd2d764-ae68-4b34-8597-f9ee22e8878e",
+      "name": "додавання мітки Ticketed",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notes": "Додає до обробленого Gmail-повідомлення мітку Ticketed. Для робочого тікета мітка встановлюється після запису в Google Sheets і успішного повідомлення в Slack, а для spam — після збереження відфільтрованого запису."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail — нове звернення": {
+      "main": [
+        [
+          {
+            "node": "Збір контексту тікета",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Збір контексту тікета": {
+      "main": [
+        [
+          {
+            "node": "Перевірка наявного ticket_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Перевірка наявного ticket_id": {
+      "main": [
+        [
+          {
+            "node": "Новий тікет?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Новий тікет?": {
+      "main": [
+        [
+          {
+            "node": "AI-класифікація тікета",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Модель OpenAI": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI-класифікація тікета",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Парсер структурованої відповіді": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI-класифікація тікета",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI-класифікація тікета": {
+      "main": [
+        [
+          {
+            "node": "Формування тікета та SLA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Формування тікета та SLA": {
+      "main": [
+        [
+          {
+            "node": "Не спам?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Не спам?": {
+      "main": [
+        [
+          {
+            "node": "Запис робочого тікета",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Запис відфільтрованого тікета",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Запис робочого тікета": {
+      "main": [
+        [
+          {
+            "node": "сповіщення відповідального",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "сповіщення відповідального": {
+      "main": [
+        [
+          {
+            "node": "додавання мітки Ticketed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Запис відфільтрованого тікета": {
+      "main": [
+        [
+          {
+            "node": "додавання мітки Ticketed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
