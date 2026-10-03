@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+!.env.example
+private/
+execution-logs/
+raw-exports/
+*.log
+.DS_Store
