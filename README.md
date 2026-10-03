@@ -1,5 +1,7 @@
 # SupportFlow AI
 
+[![Validate prepared workflows](https://github.com/vladyslav-moskalkov/supportflow-ai/actions/workflows/validate.yml/badge.svg)](https://github.com/vladyslav-moskalkov/supportflow-ai/actions/workflows/validate.yml)
+
 **AI-assisted ticket routing, first-response SLA monitoring, and controlled ticket lifecycle management.**
 
 A four-workflow n8n demonstration for an online education and consulting agency. Gmail requests become structured tickets; the team receives Slack notifications, overdue tickets escalate, and execution errors are recorded centrally.
