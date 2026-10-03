@@ -1,0 +1,9 @@
+{
+  "category": "billing",
+  "priority": "P1",
+  "owner": "finance_lead",
+  "sla_minutes": 30,
+  "reasoning": "The synthetic request describes a double charge. The billing team must review the immediate financial issue.",
+  "summary": "Customer reports two charges for one course purchase.",
+  "customer_sentiment": "frustrated"
+}
