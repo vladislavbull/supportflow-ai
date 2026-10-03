@@ -1,0 +1,597 @@
+{
+  "name": "SupportFlow AI — SLA Monitoring and Escalation",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## МЕТА WORKFLOW\n\nАвтоматично контролювати SLA відкритих тікетів:\n\n1. Кожні 5 хвилин читати open-тікети з Google Sheets.\n2. Визначати факт і тривалість прострочення.\n3. Надсилати L0 власнику, L1 тімліду та L2 директору.\n4. Зберігати рівень ескалації та не дублювати повідомлення.",
+        "height": 224,
+        "width": 464,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -944,
+        -432
+      ],
+      "typeVersion": 1,
+      "id": "2838fd68-677b-4c9f-a487-02b0b11d2034",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -912,
+        -144
+      ],
+      "id": "bb532cef-1280-4c02-b71a-08dd5d155570",
+      "name": "Тригер перевірки SLA — кожні 5 хв",
+      "notesInFlow": true,
+      "notes": "Запускає автоматичну перевірку відкритих тікетів кожні 5 хвилин. Після публікації workflow працює у фоновому режимі без ручного запуску."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SPREADSHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Tickets"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "open"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": false
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -688,
+        -144
+      ],
+      "id": "1d1670ae-6119-4769-8ca0-01642de078f5",
+      "name": "Читання відкритих тікетів",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notesInFlow": true,
+      "notes": "Читає з листа Tickets тільки рядки зі status = open. Закриті, відфільтровані та вже завершені тікети не передаються на контроль SLA."
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = DateTime.now().setZone('Europe/Madrid');\nconst due = [];\n\nfor (const item of $input.all()) {\n  const row = item.json;\n\n  if (!row.sla_deadline || row.status !== 'open') {\n    continue;\n  }\n\n  const deadline = DateTime.fromISO(row.sla_deadline, {\n    zone: 'Europe/Madrid'\n  });\n\n  if (!deadline.isValid) {\n    continue;\n  }\n\n  const minutesOverdue = Math.floor(\n    now.diff(deadline, 'minutes').minutes\n  );\n\n  if (minutesOverdue < 0) {\n    continue;\n  }\n\n  const targetLevel =\n    minutesOverdue >= 60 ? 2 :\n    minutesOverdue >= 30 ? 1 : 0;\n\n  const rawSentLevel = row.last_escalation_level;\n\n  const sentLevel =\n    rawSentLevel === '' ||\n    rawSentLevel === null ||\n    rawSentLevel === undefined\n      ? -1\n      : Number(rawSentLevel);\n\n  if (targetLevel <= sentLevel) {\n    continue;\n  }\n\n  due.push({\n    json: {\n      ...row,\n      minutes_overdue: minutesOverdue,\n      escalation_level: targetLevel,\n      target_escalation_level: targetLevel,\n      escalation_sent_at: now.toISO()\n    }\n  });\n}\n\nreturn due;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        -144
+      ],
+      "id": "784b98db-96c0-403d-9c63-ca2b1f8b569c",
+      "name": "Розрахунок рівня ескалації",
+      "notesInFlow": true,
+      "notes": "Порівнює поточний час зі sla_deadline, визначає рівень L0, L1 або L2 і повертає тільки ті порушення, для яких відповідний рівень ще не надсилався. Це захищає від повторних сповіщень."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.escalation_level }}",
+                    "rightValue": 0,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    },
+                    "id": "c2cc5531-49fb-4f72-aec2-07f1dd676b44"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "L0 — Власник"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "1f0e1883-17b4-4599-b2e0-ec076a2d3d56",
+                    "leftValue": "={{ $json.escalation_level }}",
+                    "rightValue": 1,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "L1 — Тімлід"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "4e3c8594-3fed-488b-ab9d-f67692b588db",
+                    "leftValue": "={{ $json.escalation_level }}",
+                    "rightValue": 2,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "L2 — Директор"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -240,
+        -160
+      ],
+      "id": "ed8ac9e0-c498-4774-8416-d0ff3f9b4710",
+      "name": "Маршрутизація за рівнем",
+      "notesInFlow": true,
+      "notes": "Розподіляє прострочений тікет на один із трьох каналів ескалації: L0 — власник, L1 — тімлід, L2 — директор."
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SUPPORT_CHANNEL_ID"
+        },
+        "text": "=:warning: *Нагадування — SLA прострочено*  *Власнику {{ $json.owner }}:* тікет {{ $json.priority }} прострочено на {{ $json.minutes_overdue }} хв.  *Тема:* {{ $json.subject }} *Резюме:* {{ $json.summary }}  <{{ $json.thread_link }}|→ Взяти у роботу>",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        -16,
+        -336
+      ],
+      "id": "ac4a69d3-2f34-4d27-9ece-84a1bd25869f",
+      "name": "Slack — нагадування власнику (L0)",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notesInFlow": true,
+      "notes": "Надсилає в #cx-tickets м’яке нагадування власнику одразу після порушення SLA. Містить пріоритет, час прострочення, тему, резюме та посилання на лист."
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SUPPORT_CHANNEL_ID"
+        },
+        "text": "=:rotating_light: *Ескалація L1 — тімлід*  *Тікет {{ $json.priority }} прострочено на {{ $json.minutes_overdue }} хв.* Власник {{ $json.owner }} не зреагував на нагадування.  *Тема:* {{ $json.subject }} *Настрій клієнта:* {{ $json.sentiment }} *Резюме:* {{ $json.summary }} *Обґрунтування:* {{ $json.reasoning }}  <{{ $json.thread_link }}|→ Допомогти або перепризначити>",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        -16,
+        -144
+      ],
+      "id": "950dd084-3faa-4d4f-a10f-542733e403dd",
+      "name": "Slack — ескалація тімліду (L1)",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notes": "Надсилає в #cx-leads ескалацію тімліду, коли SLA прострочено щонайменше на 30 хвилин. Передає контекст для допомоги власнику або перепризначення тікета."
+    },
+    {
+      "parameters": {
+        "sendTo": "director@example.com",
+        "subject": "=[ЕСКАЛАЦІЯ L2] {{ $json.priority }} — {{ $json.subject }}",
+        "message": "=<h2>Ескалація L2 — директор</h2>  <p> Тікет <strong>{{ $json.priority }}</strong> прострочено на <strong>{{ $json.minutes_overdue }} хв</strong>. Власник {{ $json.owner }} і тімлід не зреагували. </p>  <h3>Контекст</h3>  <ul>   <li><strong>Категорія:</strong> {{ $json.category }}</li>   <li><strong>Настрій клієнта:</strong> {{ $json.sentiment }}</li>   <li><strong>Від:</strong> {{ $json.from_email }}</li>   <li><strong>Створено:</strong> {{ $json.created_at }}</li> </ul>  <h3>Резюме</h3> <p>{{ $json.summary }}</p>  <h3>Обґрунтування AI</h3> <p><em>{{ $json.reasoning }}</em></p>  <p> <a href=\"{{ $json.thread_link }}\">→ Відкрити лист</a> </p>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -16,
+        48
+      ],
+      "id": "5c93386f-0618-4dff-acf3-50e0acf64a0a",
+      "name": "Gmail — ескалація директору (L2)",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notes": "Надсилає директору email із повним контекстом, коли тікет прострочено щонайменше на 60 хвилин. Це найвищий рівень управлінської ескалації."
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SPREADSHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Tickets"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "={{ $('Розрахунок рівня ескалації').item.json.ticket_id }}",
+            "last_escalation_level": "={{ $('Розрахунок рівня ескалації').item.json.target_escalation_level }}",
+            "last_escalated_at": "={{ $('Розрахунок рівня ескалації').item.json.escalation_sent_at }}"
+          },
+          "matchingColumns": [
+            "ticket_id"
+          ],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "from_email",
+              "displayName": "from_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sla_minutes",
+              "displayName": "sla_minutes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sla_deadline",
+              "displayName": "sla_deadline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "reasoning",
+              "displayName": "reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "thread_link",
+              "displayName": "thread_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "last_escalation_level",
+              "displayName": "last_escalation_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_escalated_at",
+              "displayName": "last_escalated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "first_response_at",
+              "displayName": "first_response_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "resolved_at",
+              "displayName": "resolved_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "classifier_version",
+              "displayName": "classifier_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        -144
+      ],
+      "id": "895f337f-64c9-422b-932e-d68c6b5bb1be",
+      "name": "Оновлення стану ескалації",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notes": "Після успішної доставки сповіщення оновлює last_escalation_level і last_escalated_at за ticket_id. Наступний запуск не повторює вже надісланий рівень ескалації."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Тригер перевірки SLA — кожні 5 хв": {
+      "main": [
+        [
+          {
+            "node": "Читання відкритих тікетів",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Читання відкритих тікетів": {
+      "main": [
+        [
+          {
+            "node": "Розрахунок рівня ескалації",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Розрахунок рівня ескалації": {
+      "main": [
+        [
+          {
+            "node": "Маршрутизація за рівнем",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Маршрутизація за рівнем": {
+      "main": [
+        [
+          {
+            "node": "Slack — нагадування власнику (L0)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack — ескалація тімліду (L1)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail — ескалація директору (L2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack — ескалація тімліду (L1)": {
+      "main": [
+        [
+          {
+            "node": "Оновлення стану ескалації",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack — нагадування власнику (L0)": {
+      "main": [
+        [
+          {
+            "node": "Оновлення стану ескалації",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail — ескалація директору (L2)": {
+      "main": [
+        [
+          {
+            "node": "Оновлення стану ескалації",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "saveDataErrorExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
