@@ -1,0 +1,510 @@
+{
+  "name": "SupportFlow AI — Ticket Lifecycle",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## МЕТА WORKFLOW\n\nКерувати життєвим циклом тікета через контрольовані webhook-події:\n\n1. Прийняти ticket_id і новий статус.\n2. Перевірити формат та дозволений перехід.\n3. Знайти тікет у Google Sheets.\n4. Записати owner, first_response_at і resolved_at.\n5. Повернути контрольовану HTTP-відповідь 200 або 404.",
+        "height": 256,
+        "width": 592
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -592,
+        -400
+      ],
+      "typeVersion": 1,
+      "id": "00c8f42e-5500-49fd-9c22-21fe4c669dce",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "supportflow-ticket-status",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -656,
+        -16
+      ],
+      "id": "2900b76f-9fb8-4519-aed3-78e8bb383007",
+      "name": "Webhook — зміна статусу тікета",
+      "notesInFlow": true,
+      "notes": "Приймає POST-запит із JSON: ticket_id, status (in_progress або closed), owner і необов’язковими first_response_at та resolved_at. Може викликатися helpdesk-системою, Slack action або внутрішньою формою."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const event = $json.body ?? $json;\nconst allowed = ['in_progress', 'closed'];\n\nif (!event.ticket_id) {\n  throw new Error('ticket_id is required');\n}\n\nif (!allowed.includes(event.status)) {\n  throw new Error('status must be in_progress or closed');\n}\n\nreturn {\n  json: {\n    ticket_id: String(event.ticket_id),\n    status: event.status,\n    owner: event.owner ?? '',\n    first_response_at: event.first_response_at ?? '',\n    resolved_at: event.resolved_at ?? ''\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        -16
+      ],
+      "id": "205d9e64-2e0d-4cfd-a4ac-6e7997edc39e",
+      "name": "Перевірка події життєвого циклу",
+      "notesInFlow": true,
+      "notes": "Перевіряє обов’язкові ticket_id і status, дозволяє тільки in_progress або closed та нормалізує необов’язкові часові мітки перед пошуком тікета."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SPREADSHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Tickets"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "ticket_id",
+              "lookupValue": "={{ $('Перевірка події життєвого циклу').item.json.ticket_id }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -208,
+        -16
+      ],
+      "id": "c60be0f9-4824-4e8f-aa79-3d4ba7bd91a6",
+      "name": "Пошук тікета",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "notesInFlow": true,
+      "waitBetweenTries": 3000,
+      "notes": "Шукає один рядок у Tickets за ticket_id. Always Output Data залишає порожній item, щоб наступна IF-нода могла повернути контрольовану відповідь 404."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e4fc082e-2471-4d9f-9d46-2bdaa643ae91",
+              "leftValue": "={{ !!$json.ticket_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        16,
+        -16
+      ],
+      "id": "196653bd-346e-46f1-9418-c39f0c59f89f",
+      "name": "Тікет знайдено?",
+      "notesInFlow": true,
+      "notes": "Перевіряє, чи знайдено ticket_id. Гілка True продовжує оновлення, а False завершує webhook відповіддю 404 без зміни таблиці."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const current = $json;\nconst event = $('Перевірка події життєвого циклу').item.json;\nconst now = DateTime.now().setZone('Europe/Madrid').toISO();\n\nif (current.status === 'closed' && event.status !== 'closed') {\n  throw new Error(\n    'Closed ticket cannot be reopened through this endpoint'\n  );\n}\n\nreturn {\n  json: {\n    ticket_id: event.ticket_id,\n    status: event.status,\n    owner: event.owner || current.owner,\n    first_response_at:\n      current.first_response_at ||\n      event.first_response_at ||\n      now,\n    resolved_at:\n      event.status === 'closed'\n        ? (\n            event.resolved_at ||\n            current.resolved_at ||\n            now\n          )\n        : (current.resolved_at || '')\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        256,
+        -192
+      ],
+      "id": "36293fb1-5b03-468d-af40-e9381b370995",
+      "name": "Підготовка оновлення статусу",
+      "notesInFlow": true,
+      "notes": "Застосовує правила переходу статусів, не дозволяє повторно відкрити closed-тікет і формує first_response_at та resolved_at у часовому поясі Europe/Madrid."
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SPREADSHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Tickets"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "={{ $json.ticket_id }}",
+            "status": "={{ $json.status }}",
+            "owner": "={{ $json.owner }}",
+            "first_response_at": "={{ $json.first_response_at }}",
+            "resolved_at": "={{ $json.resolved_at }}"
+          },
+          "matchingColumns": [
+            "ticket_id"
+          ],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "from_email",
+              "displayName": "from_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sla_minutes",
+              "displayName": "sla_minutes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sla_deadline",
+              "displayName": "sla_deadline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "reasoning",
+              "displayName": "reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "thread_link",
+              "displayName": "thread_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "last_escalation_level",
+              "displayName": "last_escalation_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "last_escalated_at",
+              "displayName": "last_escalated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "first_response_at",
+              "displayName": "first_response_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resolved_at",
+              "displayName": "resolved_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "classifier_version",
+              "displayName": "classifier_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        464,
+        -16
+      ],
+      "id": "310433f9-b9f6-463a-9b95-c59fd7cf58e6",
+      "name": "Оновлення життєвого циклу тікета",
+      "notesInFlow": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notes": "Оновлює існуючий рядок Tickets за matching column ticket_id: status, owner, first_response_at і resolved_at. Новий рядок не створює, а решту полів тікета не змінює."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  ok: true,\n  ticket_id: $('Підготовка оновлення статусу').item.json.ticket_id,\n  status: $('Підготовка оновлення статусу').item.json.status\n} }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        688,
+        -16
+      ],
+      "id": "377835a8-1423-4586-8f04-286f0bede922",
+      "name": "Відповідь 200 — успішно",
+      "notesInFlow": true,
+      "notes": "Повертає HTTP 200 і підтвердження успішного оновлення ticket_id та status. Виконується тільки після успішного запису змін у Google Sheets."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  ok: false,\n  error: 'ticket_not_found',\n  ticket_id: $('Перевірка події життєвого циклу').item.json.ticket_id\n} }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        272,
+        128
+      ],
+      "id": "c9410daf-0716-4e68-a12b-54580a729d67",
+      "name": "Відповідь 404 — тікет не знайдено",
+      "notesInFlow": true,
+      "notes": "Повертає HTTP 404 з ticket_not_found, якщо ticket_id відсутній у Google Sheets. Це контрольована бізнес-відповідь, а не системна помилка workflow."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook — зміна статусу тікета": {
+      "main": [
+        [
+          {
+            "node": "Перевірка події життєвого циклу",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Перевірка події життєвого циклу": {
+      "main": [
+        [
+          {
+            "node": "Пошук тікета",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Пошук тікета": {
+      "main": [
+        [
+          {
+            "node": "Тікет знайдено?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Тікет знайдено?": {
+      "main": [
+        [
+          {
+            "node": "Підготовка оновлення статусу",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Відповідь 404 — тікет не знайдено",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Підготовка оновлення статусу": {
+      "main": [
+        [
+          {
+            "node": "Оновлення життєвого циклу тікета",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Оновлення життєвого циклу тікета": {
+      "main": [
+        [
+          {
+            "node": "Відповідь 200 — успішно",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "saveDataErrorExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
