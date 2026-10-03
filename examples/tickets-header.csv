@@ -1,0 +1,1 @@
+ticket_id,created_at,from_email,subject,category,priority,owner,sla_minutes,sla_deadline,status,summary,reasoning,sentiment,thread_link,last_escalation_level,last_escalated_at,first_response_at,resolved_at,classifier_version
