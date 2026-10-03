@@ -1,0 +1,253 @@
+{
+  "name": "SupportFlow AI — Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        -96
+      ],
+      "id": "736f9d4d-0265-49e2-aef0-485438ab424c",
+      "name": "Error Trigger",
+      "notes": "Запускається у разі помилки в одному з основних workflow SupportFlow. Отримує від n8n інформацію про помилку, workflow та виконання, після чого передає її для нормалізації, запису в Error Log і надсилання сповіщення адміністратору."
+    },
+    {
+      "parameters": {
+        "content": "## МЕТА WORKFLOW\n\nЦентралізовано обробляти технічні помилки системи SupportFlow:\n\n1. Отримати інформацію про збій.\n2. Нормалізувати технічні дані помилки.\n3. Записати помилку в Google Sheets — Error Log.\n4. Повідомити адміністратора в Slack #automation-alerts.",
+        "height": 240,
+        "width": 528,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -896,
+        -432
+      ],
+      "typeVersion": 1,
+      "id": "8350bde9-7e09-46d7-91e7-c122bd02157a",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const payload = $json;\nconst execution = payload.execution ?? {};\nconst workflow = payload.workflow ?? {};\nconst error = execution.error ?? payload.error ?? {};\n\nreturn {\n  json: {\n    error_id: execution.id ?? ('manual-' + Date.now()),\n    occurred_at: DateTime.now().setZone('Europe/Madrid').toISO(),\n    workflow_id: workflow.id ?? '',\n    workflow_name: workflow.name ?? 'Unknown workflow',\n    execution_id: execution.id ?? '',\n    execution_url: execution.url ?? '',\n    last_node_executed: execution.lastNodeExecuted ?? '',\n    error_message: error.message ?? payload.message ?? 'Unknown error',\n    error_stack: error.stack ?? '',\n    status: 'new'\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -496,
+        -96
+      ],
+      "id": "9fc4ab98-efbc-41b3-824a-c365ea84f974",
+      "name": "Нормалізація контексту помилки",
+      "notes": "Перетворює різні формати повідомлень про помилки n8n на єдину структуру з десяти полів. Підготовлені дані використовуються для запису в Error Log і надсилання сповіщення в Slack. Початковий статус помилки — new."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SPREADSHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Error Log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "error_id": "={{ $json.error_id }}",
+            "occurred_at": "={{ $json.occurred_at }}",
+            "workflow_id": "={{ $json.workflow_id }}",
+            "workflow_name": "={{ $json.workflow_name }}",
+            "execution_id": "={{ $json.execution_id }}",
+            "execution_url": "={{ $json.execution_url }}",
+            "last_node_executed": "={{ $json.last_node_executed }}",
+            "error_message": "={{ $json.error_message }}",
+            "error_stack": "={{ $json.error_stack }}",
+            "status": "={{ $json.status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "error_id",
+              "displayName": "error_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "occurred_at",
+              "displayName": "occurred_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_id",
+              "displayName": "workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_name",
+              "displayName": "workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_url",
+              "displayName": "execution_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_node_executed",
+              "displayName": "last_node_executed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_message",
+              "displayName": "error_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_stack",
+              "displayName": "error_stack",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -272,
+        -96
+      ],
+      "id": "8fde1c6a-34fb-4e92-bb79-dbacb4613533",
+      "name": "Запис помилки до журналу",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notesInFlow": true,
+      "notes": "Додає нормалізовані дані про помилку до аркуша Error Log у Google Sheets. Журнал використовується для аудиту, пошуку повторюваних збоїв і подальшої зміни статусу помилки на investigating або resolved."
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_ALERTS_CHANNEL_ID"
+        },
+        "text": "=:warning: *Помилка workflow SupportFlow*  *Workflow:* {{ $('Нормалізація контексту помилки').item.json.workflow_name }} *Нода:* {{ $('Нормалізація контексту помилки').item.json.last_node_executed }} *Помилка:* {{ $('Нормалізація контексту помилки').item.json.error_message }} *Виконання:* {{ $('Нормалізація контексту помилки').item.json.execution_url }} *Час:* {{ $('Нормалізація контексту помилки').item.json.occurred_at }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        -48,
+        -96
+      ],
+      "id": "9da988e2-fa2f-4d7f-a53e-e69c340dd081",
+      "name": "Slack — сповіщення адміністратора",
+      "notesInFlow": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "notes": "Негайно повідомляє канал #automation-alerts про технічний збій. Повідомлення містить назву workflow, останню виконану ноду, текст помилки, посилання на execution і точний час виникнення проблеми."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Нормалізація контексту помилки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Нормалізація контексту помилки": {
+      "main": [
+        [
+          {
+            "node": "Запис помилки до журналу",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Запис помилки до журналу": {
+      "main": [
+        [
+          {
+            "node": "Slack — сповіщення адміністратора",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  }
+}
